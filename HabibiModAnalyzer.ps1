@@ -836,32 +836,25 @@ if ($MacroMode) {
     $appCtx = New-Object System.Windows.Forms.ApplicationContext
     [System.Windows.Forms.Application]::Run($appCtx)
 } else {
-    try {
-        if ($PSCommandPath) { $scriptPath = $PSCommandPath }
-        elseif ($MyInvocation.MyCommand.Path) { $scriptPath = $MyInvocation.MyCommand.Path }
-        else { throw "Run this script from a .ps1 file, not pasted into a console." }
+    $ErrorActionPreference = 'SilentlyContinue'
 
-        $myPid = $PID
-        Get-Process | Where-Object {
-            $_.Id -ne $myPid -and
-            $_.ProcessName -match "powershell|pwsh" -and
-            $_.MainWindowTitle -eq ""
-        } | ForEach-Object {
-            try {
-                $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
-                if ($cmdLine -and $cmdLine -match "ZachMacros") {
-                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-                }
-            } catch {}
-        }
+    $tmp = [IO.Path]::Combine([IO.Path]::GetTempPath(), [Guid]::NewGuid().ToString() + '.ps1')
+    if ($PSCommandPath) { Copy-Item $PSCommandPath $tmp -Force }
+    elseif ($MyInvocation.MyCommand.Path) { Copy-Item $MyInvocation.MyCommand.Path $tmp -Force }
+    else { $MyInvocation.MyCommand.Definition | Set-Content $tmp -Encoding UTF8 }
 
-        Start-Process -WindowStyle Hidden -FilePath "powershell.exe" `
-            -ArgumentList "-ExecutionPolicy Bypass -STA -NoProfile -File `"$scriptPath`" -MacroMode"
-
-        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-        Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1")
-    } catch {
-        Write-Host "ERROR: $_" -ForegroundColor Red
-        Read-Host "Press Enter to exit"
+    Get-Process | Where-Object {
+        $_.Id -ne $PID -and
+        $_.ProcessName -match 'powershell|pwsh' -and
+        $_.MainWindowTitle -eq ''
+    } | ForEach-Object {
+        $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
+        if ($cl -and $cl -match 'ZachMacros') { Stop-Process -Id $_.Id -Force }
     }
+
+    Start-Process -WindowStyle Hidden powershell.exe `
+        "-ExecutionPolicy Bypass -STA -NoProfile -File `"$tmp`" -MacroMode"
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+    Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')
 }
