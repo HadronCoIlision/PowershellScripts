@@ -859,23 +859,6 @@ if ($MacroMode) {
         elseif ($cl -match "'([^']+\.ps1)'") { $scriptPath = $Matches[1] }
         elseif ($cl -match '"([^"]+\.ps1)"') { $scriptPath = $Matches[1] }
     }
-    if (-not $scriptPath) {
-        $searchDirs = @(
-            (Join-Path $env:USERPROFILE 'Documents\Projects'),
-            (Join-Path $env:USERPROFILE 'Documents'),
-            (Join-Path $env:USERPROFILE 'Desktop'),
-            $env:USERPROFILE
-        )
-        foreach ($dir in $searchDirs) {
-            if (Test-Path $dir) {
-                $found = Get-ChildItem -Path $dir -Filter 'ZachMacros.ps1' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($found) { $scriptPath = $found.FullName; break }
-            }
-        }
-    }
-
-    $scriptDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { $env:TEMP }
-
     try {
         $myPid = $PID
         Get-Process | Where-Object {
@@ -895,13 +878,12 @@ if ($MacroMode) {
             throw "Could not find script path. PSCommandPath='$PSCommandPath' Path='$($MyInvocation.MyCommand.Path)'"
         }
 
-        Start-Process -WindowStyle Hidden -FilePath "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        Start-Process -WindowStyle Hidden -FilePath "powershell.exe" `
             -ArgumentList "-ExecutionPolicy Bypass -STA -NoProfile -File `"$scriptPath`" -MacroMode"
 
         Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
         Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1")
     } catch {
-        $_ | Out-File (Join-Path $scriptDir 'error.log') -Force
         Write-Host "ERROR: $_" -ForegroundColor Red
         Read-Host "Press Enter to exit"
     }
