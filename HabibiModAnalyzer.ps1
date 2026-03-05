@@ -836,30 +836,11 @@ if ($MacroMode) {
     $appCtx = New-Object System.Windows.Forms.ApplicationContext
     [System.Windows.Forms.Application]::Run($appCtx)
 } else {
-    $ErrorActionPreference = 'Stop'
-    $scriptPath = $null
-    if ($PSCommandPath) { $scriptPath = $PSCommandPath }
-    if (-not $scriptPath -and $MyInvocation.MyCommand.Path) { $scriptPath = $MyInvocation.MyCommand.Path }
-    if (-not $scriptPath) {
-        $def = $MyInvocation.MyCommand.Definition
-        if ($def -and $def.Length -lt 300 -and $def -match '\.ps1' -and (Test-Path $def -ErrorAction SilentlyContinue)) {
-            $scriptPath = $def
-        }
-    }
-    if (-not $scriptPath) {
-        $inv = $MyInvocation.InvocationName
-        if ($inv -and $inv -match '\.ps1' -and (Test-Path $inv -ErrorAction SilentlyContinue)) {
-            $scriptPath = $inv
-        }
-    }
-    if (-not $scriptPath) {
-        $cl = [Environment]::CommandLine
-        if ($cl -match "(?:&|\.)\s*'([^']+\.ps1)'") { $scriptPath = $Matches[1] }
-        elseif ($cl -match '(?:&|\.)\s*"([^"]+\.ps1)"') { $scriptPath = $Matches[1] }
-        elseif ($cl -match "'([^']+\.ps1)'") { $scriptPath = $Matches[1] }
-        elseif ($cl -match '"([^"]+\.ps1)"') { $scriptPath = $Matches[1] }
-    }
     try {
+        if ($PSCommandPath) { $scriptPath = $PSCommandPath }
+        elseif ($MyInvocation.MyCommand.Path) { $scriptPath = $MyInvocation.MyCommand.Path }
+        else { throw "Run this script from a .ps1 file, not pasted into a console." }
+
         $myPid = $PID
         Get-Process | Where-Object {
             $_.Id -ne $myPid -and
@@ -872,10 +853,6 @@ if ($MacroMode) {
                     Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
                 }
             } catch {}
-        }
-
-        if (-not $scriptPath -or -not (Test-Path $scriptPath)) {
-            throw "Could not find script path. PSCommandPath='$PSCommandPath' Path='$($MyInvocation.MyCommand.Path)'"
         }
 
         Start-Process -WindowStyle Hidden -FilePath "powershell.exe" `
