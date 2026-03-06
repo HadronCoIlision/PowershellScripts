@@ -1,5 +1,4 @@
 param([switch]$MacroMode)
-if ($env:ZACH_MACRO_MODE -eq '1') { $MacroMode = [switch]::Present }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -861,9 +860,14 @@ if ($MacroMode) {
         Start-Process -WindowStyle Hidden $psExe `
             "-ExecutionPolicy Bypass -STA -NoProfile -File `"$($MyInvocation.MyCommand.Path)`" -MacroMode"
     } else {
-        $cmd = "`$env:ZACH_MACRO_MODE='1'; iex (irm '$scriptUrl')"
-        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
-        Start-Process -WindowStyle Hidden $psExe "-STA -NoProfile -EncodedCommand $enc"
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) "ZachMacros.ps1"
+        try {
+            Invoke-RestMethod $scriptUrl -ErrorAction Stop | Set-Content -LiteralPath $tmp -Encoding UTF8
+        } catch {}
+        if (Test-Path $tmp) {
+            Start-Process -WindowStyle Hidden $psExe `
+                "-ExecutionPolicy Bypass -STA -NoProfile -File `"$tmp`" -MacroMode"
+        }
     }
 
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
