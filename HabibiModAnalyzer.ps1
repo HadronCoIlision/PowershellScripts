@@ -1,5 +1,71 @@
 param([switch]$MacroMode)
 
+# If running in MacroMode but NOT in STA thread, relaunch with -STA
+if ($MacroMode -and [Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    $psExe = (Get-Process -Id $PID).Path
+    if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+    $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+    if ($scriptPath) {
+        Start-Process -FilePath $psExe -ArgumentList @(
+            '-ExecutionPolicy', 'Bypass', '-STA', '-NoProfile',
+            '-File', $scriptPath, '-MacroMode'
+        )
+    }
+    return
+}
+
+# If NOT in MacroMode, ensure TLS 1.2 and relaunch properly
+if (-not $MacroMode) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    $psExe = (Get-Process -Id $PID).Path
+    if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+    $scriptUrl = 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/ZachMacros.ps1'
+
+    $ErrorActionPreference = 'SilentlyContinue'
+    Get-Process | Where-Object {
+        $_.Id -ne $PID -and
+        $_.ProcessName -match 'powershell|pwsh' -and
+        $_.MainWindowTitle -eq ''
+    } | ForEach-Object {
+        $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
+        if ($cl -and $cl -match 'ZachMacros') { Stop-Process -Id $_.Id -Force }
+    }
+    $ErrorActionPreference = 'Continue'
+
+    $scriptPath = if ($PSCommandPath) { $PSCommandPath }
+                  elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
+                  else { $null }
+
+    if ($scriptPath) {
+        Start-Process -FilePath $psExe -WindowStyle Hidden -ArgumentList @(
+            '-ExecutionPolicy', 'Bypass', '-STA', '-NoProfile',
+            '-File', $scriptPath, '-MacroMode'
+        )
+    } else {
+        $tmp = Join-Path $env:TEMP "ZachMacros.ps1"
+        try {
+            $resp = Invoke-WebRequest -Uri $scriptUrl -UseBasicParsing -ErrorAction Stop
+            [IO.File]::WriteAllText($tmp, $resp.Content, [Text.UTF8Encoding]::new($false))
+        } catch {
+            Write-Host "Download failed: $_" -ForegroundColor Red
+        }
+        if (Test-Path $tmp) {
+            Start-Process -FilePath $psExe -ArgumentList @(
+                '-ExecutionPolicy', 'Bypass', '-STA', '-NoProfile',
+                '-File', $tmp, '-MacroMode'
+            )
+        } else {
+            Write-Host "Script file not found at $tmp" -ForegroundColor Red
+        }
+    }
+
+    $ErrorActionPreference = 'SilentlyContinue'
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+    Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')
+    return
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -14,7 +80,7 @@ public static class Win32 {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
-    public const int VK_CARET = 0xDC;
+    public const int VK_HOME = 0x24;
     public const uint KEYEVENTF_KEYUP     = 0x0002;
     public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     public const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
@@ -53,10 +119,9 @@ public static class Win32 {
 }
 "@
 
-if ($MacroMode) {
-    $cw = [Win32]::GetConsoleWindow()
-    if ($cw -ne [IntPtr]::Zero) { [Win32]::ShowWindow($cw, 0) | Out-Null }
-    [Win32]::FreeConsole() | Out-Null
+$cw = [Win32]::GetConsoleWindow()
+if ($cw -ne [IntPtr]::Zero) { [Win32]::ShowWindow($cw, 0) | Out-Null }
+[Win32]::FreeConsole() | Out-Null
 
     function Get-VKCode {
         param([string]$keyName)
@@ -727,7 +792,7 @@ if ($MacroMode) {
     $timer.Interval = 50
     $timer.Add_Tick({
         try {
-            $state = [Win32]::GetAsyncKeyState([Win32]::VK_CARET)
+            $state = [Win32]::GetAsyncKeyState([Win32]::VK_HOME)
             $isDown = ($state -band 0x8000) -ne 0
             if ($isDown -and -not $script:homeWasDown) {
                 if ($null -eq $script:guiForm -or $script:guiForm.IsDisposed) {
@@ -807,7 +872,7 @@ if ($MacroMode) {
     $timer.Start()
 
     $tray = New-Object System.Windows.Forms.NotifyIcon
-    $tray.Text    = "ZachMacros - ^ to toggle"
+    $tray.Text    = 'ZachMacros - Home to toggle'
     $tray.Visible = $true
 
     $bmp = New-Object System.Drawing.Bitmap(16,16)
@@ -835,41 +900,9 @@ if ($MacroMode) {
     })
 
     $script:guiForm = New-ZachForm
+    $script:guiForm.Show()
+    [Win32]::ShowWindow($script:guiForm.Handle, 5)
+    $script:guiForm.Activate()
 
     $appCtx = New-Object System.Windows.Forms.ApplicationContext
     [System.Windows.Forms.Application]::Run($appCtx)
-} else {
-    $ErrorActionPreference = 'SilentlyContinue'
-
-    $psExe = (Get-Process -Id $PID).Path
-    $scriptUrl = 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/ZachMacros.ps1'
-
-    Get-Process | Where-Object {
-        $_.Id -ne $PID -and
-        $_.ProcessName -match 'powershell|pwsh' -and
-        $_.MainWindowTitle -eq ''
-    } | ForEach-Object {
-        $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
-        if ($cl -and $cl -match 'ZachMacros') { Stop-Process -Id $_.Id -Force }
-    }
-
-    if ($PSCommandPath) {
-        Start-Process -WindowStyle Hidden $psExe `
-            "-ExecutionPolicy Bypass -STA -NoProfile -File `"$PSCommandPath`" -MacroMode"
-    } elseif ($MyInvocation.MyCommand.Path) {
-        Start-Process -WindowStyle Hidden $psExe `
-            "-ExecutionPolicy Bypass -STA -NoProfile -File `"$($MyInvocation.MyCommand.Path)`" -MacroMode"
-    } else {
-        $tmp = Join-Path ([IO.Path]::GetTempPath()) "ZachMacros.ps1"
-        try {
-            Invoke-RestMethod $scriptUrl -ErrorAction Stop | Set-Content -LiteralPath $tmp -Encoding UTF8
-        } catch {}
-        if (Test-Path $tmp) {
-            Start-Process -WindowStyle Hidden $psExe `
-                "-ExecutionPolicy Bypass -STA -NoProfile -File `"$tmp`" -MacroMode"
-        }
-    }
-
-    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-    Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')
-}
