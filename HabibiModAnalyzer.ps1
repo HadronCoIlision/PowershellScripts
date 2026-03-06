@@ -1,4 +1,5 @@
 param([switch]$MacroMode)
+if ($env:ZACH_MACRO_MODE -eq '1') { $MacroMode = [switch]::Present }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -14,7 +15,7 @@ public static class Win32 {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
-    public const int VK_HOME = 0x24;
+    public const int VK_CARET = 0xDC;
     public const uint KEYEVENTF_KEYUP     = 0x0002;
     public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     public const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
@@ -54,6 +55,8 @@ public static class Win32 {
 "@
 
 if ($MacroMode) {
+    $cw = [Win32]::GetConsoleWindow()
+    if ($cw -ne [IntPtr]::Zero) { [Win32]::ShowWindow($cw, 0) | Out-Null }
     [Win32]::FreeConsole() | Out-Null
 
     function Get-VKCode {
@@ -725,7 +728,7 @@ if ($MacroMode) {
     $timer.Interval = 50
     $timer.Add_Tick({
         try {
-            $state = [Win32]::GetAsyncKeyState([Win32]::VK_HOME)
+            $state = [Win32]::GetAsyncKeyState([Win32]::VK_CARET)
             $isDown = ($state -band 0x8000) -ne 0
             if ($isDown -and -not $script:homeWasDown) {
                 if ($null -eq $script:guiForm -or $script:guiForm.IsDisposed) {
@@ -735,6 +738,7 @@ if ($MacroMode) {
                     $script:guiForm.Hide()
                 } else {
                     $script:guiForm.Show()
+                    [Win32]::ShowWindow($script:guiForm.Handle, 5)
                     $script:guiForm.Activate()
                 }
             }
@@ -804,7 +808,7 @@ if ($MacroMode) {
     $timer.Start()
 
     $tray = New-Object System.Windows.Forms.NotifyIcon
-    $tray.Text    = "ZachMacros - Home to toggle"
+    $tray.Text    = "ZachMacros - ^ to toggle"
     $tray.Visible = $true
 
     $bmp = New-Object System.Drawing.Bitmap(16,16)
@@ -828,7 +832,7 @@ if ($MacroMode) {
             $script:guiForm = New-ZachForm
         }
         if ($script:guiForm.Visible) { $script:guiForm.Hide() }
-        else { $script:guiForm.Show(); $script:guiForm.Activate() }
+        else { $script:guiForm.Show(); [Win32]::ShowWindow($script:guiForm.Handle, 5); $script:guiForm.Activate() }
     })
 
     $script:guiForm = New-ZachForm
@@ -838,10 +842,8 @@ if ($MacroMode) {
 } else {
     $ErrorActionPreference = 'SilentlyContinue'
 
-    $tmp = [IO.Path]::Combine([IO.Path]::GetTempPath(), [Guid]::NewGuid().ToString() + '.ps1')
-    if ($PSCommandPath) { Copy-Item $PSCommandPath $tmp -Force }
-    elseif ($MyInvocation.MyCommand.Path) { Copy-Item $MyInvocation.MyCommand.Path $tmp -Force }
-    else { $MyInvocation.MyCommand.Definition | Set-Content $tmp -Encoding UTF8 }
+    $psExe = (Get-Process -Id $PID).Path
+    $scriptUrl = 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/ZachMacros.ps1'
 
     Get-Process | Where-Object {
         $_.Id -ne $PID -and
@@ -852,8 +854,17 @@ if ($MacroMode) {
         if ($cl -and $cl -match 'ZachMacros') { Stop-Process -Id $_.Id -Force }
     }
 
-    Start-Process -WindowStyle Hidden powershell.exe `
-        "-ExecutionPolicy Bypass -STA -NoProfile -File `"$tmp`" -MacroMode"
+    if ($PSCommandPath) {
+        Start-Process -WindowStyle Hidden $psExe `
+            "-ExecutionPolicy Bypass -STA -NoProfile -File `"$PSCommandPath`" -MacroMode"
+    } elseif ($MyInvocation.MyCommand.Path) {
+        Start-Process -WindowStyle Hidden $psExe `
+            "-ExecutionPolicy Bypass -STA -NoProfile -File `"$($MyInvocation.MyCommand.Path)`" -MacroMode"
+    } else {
+        $cmd = "`$env:ZACH_MACRO_MODE='1'; iex (irm '$scriptUrl')"
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+        Start-Process -WindowStyle Hidden $psExe "-STA -NoProfile -EncodedCommand $enc"
+    }
 
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
     Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/HadronCollision/PowershellScripts/refs/heads/main/HabibiModAnalyzer.ps1')
